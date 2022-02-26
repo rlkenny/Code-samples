@@ -26,6 +26,7 @@ Southern California. The goal was to analyse the success of endangered Tecate Cy
 restoration efforts, and the contribution of various environmental and abiotic 
 variables to that success.
 
+
 3. University of California, Santa Barbara
 Bren School of Environmental Science and Management
 
