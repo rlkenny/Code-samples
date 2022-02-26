@@ -13,6 +13,13 @@ library(plotly)
 library(png)
 library(imager)
 
+# Load libraries
+
+pkgs <- c("tidyverse", "shiny", "shinythemes", "sf", "rgeos", "rmapshaper", "janitor", "datasets", "RColorBrewer", "plotly", "png", "imager")
+for (pkg in pkgs) {
+    do.call("library", list(pkg))
+}
+
 # Read in data
 
 scatterplot_df1 <- read_csv("clean_scatterplot.csv")
