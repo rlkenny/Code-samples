@@ -1,18 +1,3 @@
-library(shiny)
-library(tidyverse)
-library(dplyr)
-library(shinythemes)
-library(sf)
-library(rgeos)
-library(ggplot2)
-library(rmapshaper)
-library(janitor)
-library(datasets)
-library(RColorBrewer)
-library(plotly)
-library(png)
-library(imager)
-
 # Load libraries
 
 pkgs <- c("tidyverse", "shiny", "shinythemes", "sf", "rgeos", "rmapshaper", "janitor", "datasets", "RColorBrewer", "plotly", "png", "imager")
