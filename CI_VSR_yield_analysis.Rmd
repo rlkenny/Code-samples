@@ -17,7 +17,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #load libraries
 
-pkgs <- c("tidyverse", "lubridate", "ggthemes", "broom", "dotwhisker", "estimatr", "multiwayvcov", "mice", "miceadds", "RColorBrewer", "coefplot", "wesanderson", "cowplot", "Amelia", )
+pkgs <- c("tidyverse", "lubridate", "ggthemes", "broom", "dotwhisker", "estimatr", "multiwayvcov", "mice", "miceadds", "RColorBrewer", "coefplot", "wesanderson", "cowplot", "Amelia")
 for (pkg in pkgs) {
     do.call("library", list(pkg))
 }
