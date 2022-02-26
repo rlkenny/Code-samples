@@ -1,6 +1,6 @@
 ---
-title: 'Yield Analysis: All Lm.Cluster Figures'
-author: "Austin Richards"
+title: 'Conservation International: Vital Signs Rwanda Crop Yield Analysis'
+author: "Rachel Kenny and Austin Richards"
 date: "3/13/2019"
 output: html_document
 ---
@@ -16,24 +16,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 
 #load libraries
-library(tidyverse)
-require(estimatr)
-library(dplyr)
-library(readr)
-library(ggplot2)
-library(broom)
-library(purrr)
-library(dotwhisker)
-library(estimatr)
-library(readr)
-library(mice)
-library(miceadds)
-library(Amelia)
-library(RColorBrewer)
-library(coefplot)
-library(wesanderson)
-library(multiwayvcov)
-library(cowplot)
+
+pkgs <- c("tidyverse", "lubridate", "ggthemes", "broom", "dotwhisker", "estimatr", "multiwayvcov", "mice", "miceadds", "RColorBrewer", "coefplot", "wesanderson", "cowplot", "Amelia", )
+for (pkg in pkgs) {
+    do.call("library", list(pkg))
+}
 
 #load data
 fieldcrop <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_field_season_fieldcrop.csv"))
