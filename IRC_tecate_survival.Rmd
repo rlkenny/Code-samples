@@ -1,7 +1,7 @@
 ---
-title: "IRC_tecate_survival"
+title: "Irvine Ranch Conservancy: Endangered Tecate Cypress Restoration Analysis"
 author: "Rachel Kenny"
-date: "9/2/2020"
+date: "9/2/2021"
 output: html_document
 ---
 
@@ -12,10 +12,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 
-library(tidyverse)
-library(here)
-library(readxl)
-library(janitor)
+pkgs <- c("tidyverse", "here", "readxl", "janitor")
+for (pkg in pkgs) {
+    do.call("library", list(pkg))
+}
 
 # Tecate data 
 ph1 <- read_excel(here("data", "Phase1_data.xlsx")) %>% 
