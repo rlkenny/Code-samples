@@ -17,23 +17,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 
 #load libraries
-library(tidyverse)
-library(lubridate)
-library(dplyr)
-library(readr)
-library(ggplot2)
-library(ggthemes)
-library(broom)
-library(purrr)
-library(dotwhisker)
-library(estimatr)
-library(readr)
-library(multiwayvcov)
-library(mice)
-library(miceadds)
-library(RColorBrewer)
-library(coefplot)
-library(wesanderson)
+
+pkgs <- c("tidyverse", "lubridate", "ggthemes", "broom", "dotwhisker", "estimatr", "multiwayvcov", "mice", "miceadds", "RColorBrewer", "coefplot", "wesanderson")
+for (pkg in pkgs) {
+    do.call("library", list(pkg))
+}
 
 
 #load data
