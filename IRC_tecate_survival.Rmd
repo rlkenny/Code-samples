@@ -1,0 +1,311 @@
+---
+title: "IRC_tecate_survival"
+author: "Rachel Kenny"
+date: "9/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+library(tidyverse)
+library(here)
+library(readxl)
+library(janitor)
+
+# Tecate data 
+ph1 <- read_excel(here("data", "Phase1_data.xlsx")) %>% 
+  clean_names()
+
+ph2 <- read_excel(here("data", "Phase2_data.xlsx")) %>% 
+  clean_names()
+
+ph3 <- read_excel(here("data", "Phase3_data.xlsx")) %>% 
+  clean_names()
+
+# Soil data
+soil1 <- read_excel(here("data", "Tecate_PhaseI_Topo1m_soil.xlsx")) %>% 
+  clean_names()
+
+soil2 <- read_excel(here("data", "Tecate_PhaseII_Topo1m_Soil.xlsx")) %>% 
+  clean_names()
+
+soil3 <- read_excel(here("data", "Tecate_PhaseIII_Topo1m_soil.xlsx")) %>% 
+  clean_names()
+
+# Climate data
+
+clim1 <- read_excel(here("data", "PRISM_p1.xlsx")) %>% 
+  clean_names()
+
+clim2 <- read_excel(here("data", "PRISM_p2.xlsx")) %>% 
+  clean_names()
+
+clim3 <- read_excel(here("data", "PRISM_p3.xlsx")) %>% 
+  clean_names()
+
+```
+
+## Data wrangling
+```{r}
+
+join1 <- inner_join(ph1, soil1, by = "id")
+
+df1 <- join1 %>% 
+  filter(july_2012_survival == 0 | july_2012_survival == 1) %>% 
+  mutate(year_planted = "2011") %>% 
+  select(id, site, year_planted, jan_2011hght_cm, july_2012_survival, aug_2012_shrub_cover, awc, clay, depth_t_rl, orgmat, ph, sand, slope1m, aspect1m, curvature)
+
+colnames(df1) <- c("id","site", "year_planted", "height_planted", "survival_y1", "shrub_cover_y1", "awc", "clay", "depth_t_rl", "orgmat", "ph", "sand", "slope1m", "aspect1m", "curvature")
+
+df1 <- inner_join(df1, clim1, by = "id")
+
+# View(df1)
+
+######################################
+
+join2 <- inner_join(ph2, soil2, by = "id")
+
+df2 <- join2 %>% 
+  filter(july_13_survival == 0 | july_13_survival == 1) %>% 
+  mutate(year_planted = "2012") %>% 
+  select(id, site, year_planted, jan_12_height_cm, july_13_survival, july_12_percent_native_w_in_0_25m, awc, clay, depth_t_rl, orgmat, ph, sand, slope1m, aspect1m, curvature)
+
+colnames(df2) <- c("id","site", "year_planted", "height_planted", "survival_y1", "shrub_cover_y1", "awc", "clay", "depth_t_rl", "orgmat", "ph", "sand", "slope1m", "aspect1m", "curvature")
+
+df2 <- inner_join(df2, clim2, by = "id")
+
+# View(join2)
+
+######################################
+
+join3 <- inner_join(ph3, soil3, by = "id") 
+
+df3 <- join3 %>% 
+  filter(x2016_survival == 0 | x2016_survival == 1) %>% 
+  mutate(year_planted = "2015") %>% 
+  select(id, site, year_planted, jan2015_hght_cm, x2016_survival, summer_2015_percent_shrub_cover, awc, clay, depth_t_rl, orgmat, ph, sand, slope1m, aspect1m, curvature)
+
+colnames(df3) <- c("id","site", "year_planted", "height_planted", "survival_y1", "shrub_cover_y1", "awc", "clay", "depth_t_rl", "orgmat", "ph", "sand", "slope1m", "aspect1m", "curvature")
+
+df3 <- inner_join(df3, clim3, by = "id")
+
+# View(join3)
+
+df_y1 <- rbind(df1, df2, df3)
+
+df_y1$site <- as.factor(df_y1$site)
+df_y1$year_planted <- as.factor(df_y1$year_planted)
+df_y1$height_planted <- as.numeric(df_y1$height_planted)
+df_y1$survival_y1 <- as.numeric(df_y1$survival_y1)
+df_y1$shrub_cover_y1 <- as.numeric(df_y1$shrub_cover_y1)
+
+```
+
+## PH = ALL, Y = 1
+## Binomial model
+### Survival ~ site + year_planted + height_planted
+
+```{r}
+
+blm_y1 <- glm(survival_y1 ~ site + year_planted + height_planted, data = df_y1, family = "binomial")
+
+summary(blm_y1)
+
+```
+
+
+## PH = ALL, Y = 2
+## Binomial model
+### Survival ~ site + year_planted + height_planted
+
+```{r}
+
+# View(join1)
+
+df1 <- join1 %>% 
+  filter(aug_2013_survival == 0 | aug_2013_survival == 1) %>% 
+  mutate(year_planted = "2011") %>% 
+  select(id, site, year_planted, jan_2011hght_cm, aug_2013_survival)
+
+colnames(df1) <- c("id","site", "year_planted", "height_planted", "survival_y2")
+
+# View(df1)
+
+##
+
+df2 <- join2 %>% 
+  filter(july_14_survival == 0 | july_14_survival == 1) %>% 
+  mutate(year_planted = "2012") %>% 
+  select(id, site, year_planted, jan_12_height_cm, july_14_survival)
+
+colnames(df2) <- c("id","site", "year_planted", "height_planted", "survival_y2")
+
+# View(df2)
+
+##
+
+df3 <- join3 %>% 
+  filter(x2017_survival == 0 | x2017_survival == 1) %>% 
+  mutate(year_planted = "2015") %>% 
+  select(id, site, year_planted, jan2015_hght_cm, x2017_survival)
+
+colnames(df3) <- c("id","site", "year_planted", "height_planted", "survival_y2")
+
+# View(df3)
+
+df_y2 <- rbind(df1, df2, df3)
+
+df_y2$site <- as.factor(df_y2$site)
+df_y2$year_planted <- as.factor(df_y2$year_planted)
+df_y2$height_planted <- as.numeric(df_y2$height_planted)
+df_y2$survival_y2 <- as.numeric(df_y2$survival_y2)
+
+```
+
+## YEAR2 model results
+```{r}
+
+# View(df_y2)
+
+blm_y2 <- glm(survival_y2 ~ site + year_planted + height_planted, data = df_y2, family = "binomial")
+
+summary(blm_y2)
+
+```
+
+
+## PH = ALL, Y = 3
+## Binomial model
+### Survival ~ site + year_planted + height_planted
+```{r}
+
+# View(join1)
+
+df1 <- join1 %>% 
+  filter(july_2014_survival == 0 | july_2014_survival == 1) %>% 
+  mutate(year_planted = "2011") %>% 
+  select(id, site, year_planted, jan_2011hght_cm, july_2014_survival)
+
+colnames(df1) <- c("id","site", "year_planted", "height_planted", "survival_y3")
+
+# View(df1)
+
+##
+
+df2 <- join2 %>% 
+  filter(july_15_survival == 0 | july_15_survival == 1) %>% 
+  mutate(year_planted = "2012") %>% 
+  select(id, site, year_planted, jan_12_height_cm, july_15_survival)
+
+colnames(df2) <- c("id","site", "year_planted", "height_planted", "survival_y3")
+
+# View(df2)
+
+##
+
+df3 <- join3 %>% 
+  filter(x2018_survival == 0 | x2018_survival == 1) %>% 
+  mutate(year_planted = "2015") %>% 
+  select(id, site, year_planted, jan2015_hght_cm, x2018_survival)
+
+colnames(df3) <- c("id","site", "year_planted", "height_planted", "survival_y3")
+
+# View(df3)
+
+df_y3 <- rbind(df1, df2, df3)
+
+df_y3$site <- as.factor(df_y3$site)
+df_y3$year_planted <- as.factor(df_y3$year_planted)
+df_y3$height_planted <- as.numeric(df_y3$height_planted)
+df_y3$survival_y3 <- as.numeric(df_y3$survival_y3)
+
+```
+
+## YEAR3 model
+```{r}
+
+# View(df_y3)
+
+blm_y3 <- glm(survival_y3 ~ site + year_planted + height_planted, data = df_y3, family = "binomial")
+
+summary(blm_y3)
+
+```
+
+## PH = 2 & #, Y = 1, SITE = 2
+## Binomial model
+### Survival ~ year_planted + height_planted
+```{r}
+
+df_y1_s2 <- df_y1 %>% 
+  filter(site == 2) 
+
+# View(df_y1_s2)
+
+blm_y1_s2 <- glm(survival_y1 ~ year_planted + height_planted, data = df_y1_s2, family = "binomial")
+
+summary(blm_y1_s2)
+
+```
+
+
+## PH = 2 & 3, Y = 1, SITE = 2
+## Binomial model
+### Survival ~ year_planted + height_planted + SOIL
+```{r}
+
+df_y1_s2 <- df_y1 %>% 
+  filter(site == 2) 
+
+View(df_y1_s2)
+
+blm_y1_s2 <- glm(survival_y1 ~ year_planted + height_planted + shrub_cover_y1 + awc + clay + slope1m + aspect1m + curvature, data = df_y1_s2, family = "binomial")
+
+blm_y1_s2 <- glm(survival_y1 ~ year_planted + awc + clay + slope1m, data = df_y1_s2, family = "binomial")
+
+summary(blm_y1_s2)
+
+```
+
+
+## PH = 2 & 3, Y = 1, SITE = 2
+## Binomial model
+### Survival ~ year_planted + height_planted + SOIL + CLIM
+```{r}
+
+df_y1_s2 <- df_y1 %>% 
+  filter(site == 2) 
+
+hist(df_y1_s2$age1grow_sum_ppt) # 379.6 - 381
+hist(df_y1_s2$age1grow_avg_tmin)
+hist(df_y1_s2$age1grow_avg_tmean)
+hist(df_y1_s2$age1grow_avg_tmax)
+hist(df_y1_s2$age1non_g_sum_ppt) # 135.9 - 136.4
+hist(df_y1_s2$age1non_g_avg_tmin)
+hist(df_y1_s2$age1non_g_avg_tmean)
+hist(df_y1_s2$age1non_g_avg_tmax)
+
+summary(df_y1_s2)
+
+View(df_y1_s2)
+
+blm_y1_s2 <- glm(survival_y1 ~ year_planted + awc + clay + slope1m, data = df_y1_s2, family = "binomial")
+
+summary(blm_y1_s2)
+
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,684 @@
+---
+title: 'Yield Analysis: All Lm.Cluster Figures'
+author: "Austin Richards"
+date: "3/13/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Data
+
+###Load libraries & data
+```{r}
+
+#load libraries
+library(tidyverse)
+require(estimatr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(broom)
+library(purrr)
+library(dotwhisker)
+library(estimatr)
+library(readr)
+library(mice)
+library(miceadds)
+library(Amelia)
+library(RColorBrewer)
+library(coefplot)
+library(wesanderson)
+library(multiwayvcov)
+library(cowplot)
+
+#load data
+fieldcrop <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_field_season_fieldcrop.csv"))
+hh_fieldcrop <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_fieldcrop.csv"))
+field_season <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_field_season.csv"))
+hh_indiv <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_individual.csv"))
+
+```
+
+###Data wrangling
+```{r}
+#Filter fieldcrop, treat factors as factors and numeric as numeric
+fieldcrop <- dplyr::filter(fieldcrop, country == 'RWA', ag4a_15 != "na")
+fieldcrop$ag4a_08 <- as.numeric(fieldcrop$ag4a_08)
+fieldcrop$ag4a_15 <- as.numeric(fieldcrop$ag4a_15)
+fieldcrop$ag4a_15_unit <- as.factor(fieldcrop$ag4a_15_unit)
+fieldcrop$crop_name <- as.factor(fieldcrop$crop_name)
+fieldcrop$ag4a_15_unit[which(fieldcrop$ag4a_15_unit=="Liter")] <- "Kg" #because this is a misentry
+fieldcrop <- filter(fieldcrop, ag4a_15_unit == "Kg")
+
+#fix crop name mismatches
+fieldcrop$crop_name[which(fieldcrop$crop_name=="Irish potatoes")] <- "Irish Potatoes"
+fieldcrop$crop_name[which(fieldcrop$crop_name=="Blood fruit")] <- "Blood Fruit"  
+
+#Filter field_season, treat factors as factors and numeric as numeric
+field_season <- filter(field_season, country == 'RWA',  ag3a_03 == 'Cultivated' )
+field_season$ag3a_39 <- as.factor(field_season$ag3a_39)
+field_season$ag3a_39a <- as.factor(field_season$ag3a_39a)
+field_season$ag3a_39a_other <- as.factor(field_season$ag3a_39a_other)
+field_season$ag3a_40 <- as.numeric(field_season$ag3a_40)
+field_season$ag3a_45 <- as.factor(field_season$ag3a_45)
+field_season$ag3a_47 <- as.factor(field_season$ag3a_47)
+
+#fix crop name mismatch
+field_season$ag3a_07_1[which(field_season$ag3a_07_1=="Irish potatoes")] <- "Irish Potatoes"
+field_season$ag3a_07_1[which(field_season$ag3a_07_1=="Blood fruit")] <- "Blood Fruit"
+
+#Set landscape # as factor in household survey data
+hh_fieldcrop$landscape_no <- as.factor(hh_fieldcrop$landscape_no)
+
+#Join fieldcrop and field_season dataframes
+joined_df <- inner_join(field_season, fieldcrop, by =c("id"= "parent_id", 'round', "landscape_no", "country", "field_no", "hh_refno", "season"))
+
+#Add columns for yield
+joined_df <- mutate(joined_df, kg_peracre = ag4a_15/ag4a_08)
+joined_df <- mutate(joined_df, kg_perha = kg_peracre*(1/.404686))
+
+#per acre planted 
+joined_df$ag4a_02[which(joined_df$ag4a_02=="1/4")] <- .25
+joined_df$ag4a_02[which(joined_df$ag4a_02=="1/2")] <- .5
+joined_df$ag4a_02[which(joined_df$ag4a_02=="3/4")] <- .75
+joined_df$ag4a_02[which(joined_df$ag4a_02=="Almost All")] <- 1
+joined_df$ag3a_40 <- as.numeric(joined_df$ag3a_40)
+joined_df$ag3a_47 <- as.numeric(joined_df$ag3a_47)
+joined_df$ag4a_02 <- as.numeric(joined_df$ag4a_02)
+
+joined_df <- mutate(joined_df, kg_peracre_planted = case_when(ag4a_01 == TRUE ~ kg_peracre, ag4a_01 == FALSE ~ ag4a_15/(ag4a_08*ag4a_02))) %>% 
+  mutate(kg_perha_planted = kg_peracre_planted *(1/.404686))
+
+#value per hectare planted 
+joined_df <- filter(joined_df, kg_perha_planted != Inf) %>% 
+  mutate(value_peracre = ag4a_16/ag4a_08) %>% 
+  mutate(value_perha = value_peracre*(1/.404686)) %>% 
+  mutate(value_peracre_planted = case_when(ag4a_01 == TRUE ~ value_peracre, ag4a_01 == FALSE ~ ag4a_16/ag4a_08*ag4a_02)) %>% 
+  mutate(value_perha_planted = value_peracre_planted *(1/.404686))
+
+#Add column for pesticide kg per hectare planted
+joined_df <-mutate(joined_df, pesticide_use_kg = ifelse(ag3a_60_2 == "Millilitre", ag3a_60_1*0.001, ag3a_60_1)) %>% 
+  mutate(pesticide_use_kg = case_when(ag3a_58 == TRUE ~ pesticide_use_kg, ag3a_58 == FALSE ~ 0)) %>% 
+  mutate(pest_peracre = pesticide_use_kg/ag4a_08) %>% 
+  mutate(pest_perha = pest_peracre*(1/.404686)) %>% 
+  mutate(pest_peracre_planted = case_when(ag4a_01 == TRUE ~ pest_peracre, ag4a_01 == FALSE ~ pest_peracre/ag4a_02)) %>% 
+  mutate(pest_perha_planted = pest_peracre_planted *(1/.404686))
+
+#Add column for inorg fert kg per hectare planted
+joined_df <- mutate(joined_df, inorg_peracre = ag3a_47/ag4a_08) %>% 
+  mutate(inorg_perha = inorg_peracre*(1/.404686)) %>%  
+  mutate(inorg_perha_planted = case_when(ag4a_01 == TRUE ~ inorg_perha, ag4a_01 == FALSE ~ inorg_perha/ag4a_02)) %>% 
+  mutate(inorg_perha_planted = case_when(ag3a_45 ==TRUE ~ inorg_perha_planted, ag3a_45 == FALSE ~ 0 ))
+
+#Add column for org fert kg per hectare planted
+joined_df <- mutate(joined_df, org_peracre = ag3a_40/ag4a_08) %>% 
+  mutate(org_perha = org_peracre*(1/.404686)) %>%
+  mutate(org_perha_planted = case_when(ag4a_01 == TRUE ~ org_peracre, ag4a_01 == FALSE ~ org_perha/ag4a_02)) %>% 
+  mutate(org_perha_planted = case_when(ag3a_39 ==TRUE ~ org_perha_planted, ag3a_39 == FALSE ~ 0 ))
+
+```
+
+
+```{r}
+##Filter to only retain households in Rwanda, aggregate income categories by household
+
+hh_indiv <- filter(hh_indiv, country == "RWA")
+
+hh_nonag_income <- aggregate(hh_e65_1 ~ hh_refno, FUN = sum, data = hh_indiv )
+
+hh_business_rev <- aggregate(hh_e64_1 ~ hh_refno, FUN = sum, data = hh_indiv) 
+
+joined_df <- right_join(hh_nonag_income, joined_df, by = "hh_refno")
+
+```
+
+
+```{r}
+#make cluster variable for unique field id
+joined_df <- mutate(joined_df, cluster = paste(hh_refno, field_no, sep='-'))
+
+#now df is filtered to only include 'main crops' from a field
+df_maincr <- filter(joined_df, crop_name == ag3a_07_1)
+df_maincr$crop_name[which(df_maincr$crop_name=="Blood fruit")] <- "Blood Fruit"
+
+df <- df_maincr
+```
+
+
+```{r}
+#trimmming top and bottom 2.5% of yield (kg) observations for every crop in df
+
+cr <- unique(df$crop_name)
+df <- df[!is.na(df$ag4a_04),] #Removes NA value for intercropping (this is removing just one single obs)
+
+#create exclude variable
+
+df$exclude_2.5 <- NA
+
+
+for(i in 1:length(cr)){
+
+df$exclude_2.5[df$crop_name==cr[i]] <- ifelse(df$kg_perha_planted[df$crop_name==cr[i]] > quantile(df$kg_perha_planted[df$crop_name==cr[i]], probs=0.975) | df$kg_perha_planted[df$crop_name==cr[i]] < quantile(df$kg_perha_planted[df$crop_name==cr[i]], probs=0.025), 1, 0)
+
+}
+
+table(df$exclude_2.5, useNA="always")
+
+df <- df[df$exclude_2.5==0,]
+
+```
+
+
+```{r}
+#scaling pesticdes and inorganic fertilizer to 10 kg units, and organic fertilizer to 100 kg unit
+
+df$org_perha_planted <- df$org_perha_planted/100
+
+df$inorg_perha_planted <- df$inorg_perha_planted/10
+
+df$pest_perha_planted <- df$pest_perha_planted/10
+
+# NOW "df" is master joined data frame, trimmed to only retain "main crops", and, for each crop, trimmed of top and bottom 2.5% of observations of kgs of yield per HA planted, and fertilizer is scaled to 100s of kgs for organic, and pesticide and inorganic fertilizers are scaled to 10s of kgs
+```
+
+
+```{r}
+#Replace all NA values to FALSE - we are assuming that if, during data entry, folks selected used "NA", there was no erosion control techniques being applied
+
+df[c("ag3a_14")][is.na(df[c("ag3a_14")])] <- FALSE
+
+```
+
+
+###Linear models for each crop
+
+```{r}
+#making data frame with only crops of at least 30 observations, our minimum standard for regression models
+
+n30<- df %>% 
+group_by(crop_name) %>% filter(n() >= 30) %>%  droplevels() %>% 
+  select("kg_perha_planted", "crop_name", "ag4a_04", "ag3a_14", "ag4a_19", "ag4a_23", "hh_e65_1", "org_perha_planted", "inorg_perha_planted", "pest_perha_planted", "landscape_no", "round", "season", "cluster") 
+  
+
+```
+
+
+```{r}
+colnames(n30)[colnames(n30)=="ag4a_04"] <- "intercropped"
+colnames(n30)[colnames(n30)=="ag3a_14"] <- "erosion_c"
+colnames(n30)[colnames(n30)=="hh_e65_1"] <- "hh_earnings"
+colnames(n30)[colnames(n30)=="ag4a_19"] <- "purchased_seed"
+
+#View(n30)
+```
+
+
+```{r}
+
+#For each intervetion, creating a list which only reatains crops which a) had a minimum of 30 total observation in the data set b) had at least 5 which recieved the intervention
+
+sometimes_ic <- subset(n30, intercropped == TRUE) %>%  droplevels()
+sometimes_ic <- sometimes_ic %>% group_by(crop_name) %>% filter(n() >=5) %>%  droplevels() 
+sometimes_ic <- unique(sometimes_ic$crop_name)
+
+sometimes_ogf <- subset(n30, org_perha_planted > 0)  %>%  droplevels()
+sometimes_ogf <- sometimes_ogf %>% group_by(crop_name) %>% filter(n() >=5) %>%  droplevels() 
+sometimes_ogf <- unique(sometimes_ogf$crop_name)
+
+
+sometimes_inogf <- subset(n30, inorg_perha_planted > 0) %>%  droplevels()
+sometimes_inogf <- sometimes_inogf %>% group_by(crop_name) %>% filter(n() >= 5) %>%  droplevels() 
+sometimes_inogf <- unique(sometimes_inogf$crop_name)
+
+sometimes_seed <- subset(n30, purchased_seed == TRUE ) %>%  droplevels()
+sometimes_seed <- sometimes_seed %>% group_by(crop_name) %>% filter(n() >= 5) %>%  droplevels() 
+sometimes_seed <- unique(sometimes_seed$crop_name)
+
+
+sometimes_pest<- subset(n30, pest_perha_planted > 0 ) %>%  droplevels()
+sometimes_pest <- sometimes_pest%>% group_by(crop_name) %>% filter(n() >= 5) %>%  droplevels() 
+sometimes_pest <- unique(sometimes_pest$crop_name)
+
+sometimes_erode<- subset(n30, erosion_c == TRUE ) %>%  droplevels()
+sometimes_erode <- sometimes_erode%>% group_by(crop_name) %>% filter(n() >= 5) %>%  droplevels() 
+sometimes_erode <- unique(sometimes_erode$crop_name)
+
+```
+
+
+```{r}
+#Specifying factors
+
+n30$round <- as.factor(n30$round)
+n30$landscape_no <- as.factor(n30$landscape_no)
+n30$season <- as.factor(n30$season)
+n30$cluster <- as.factor(n30$cluster)
+```
+
+
+
+### Simple linear models
+
+```{r}
+#running a cluster regression for each crop which met criteria above, for each intervention. Recall data has already been trimmed of top and bottom 2.5% of yield observations for each crop.
+#robust standard errors are clustered on unique plot id (which I've created and named "cluter" (that's just what lm.cluster is doing to acccount for the fact that yield may be partially dependend on unique plot id). Each regression controls for landscape, round and season)
+
+
+inter_lm <- n30 %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_ic) %>% 
+    do(tidy(lm_robust(kg_perha_planted ~ intercropped + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+ogfert_lm <- n30 %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_ogf ) %>% 
+    do(tidy(lm_robust(kg_perha_planted ~ org_perha_planted + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+inogfert_lm <- n30 %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_inogf ) %>% 
+  filter(n() >= 5) %>%  droplevels() %>% 
+  do(tidy(lm_robust(kg_perha_planted ~ inorg_perha_planted + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+seed_lm <- n30  %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_seed ) %>%  
+  filter(n() >= 5) %>%  droplevels() %>% 
+   do(tidy(lm_robust(kg_perha_planted ~ purchased_seed + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+pest_lm <- n30 %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_pest ) %>%  
+  do(tidy(lm_robust(kg_perha_planted ~ pest_perha_planted + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+erode_lm <- n30 %>% 
+  group_by(crop_name) %>% 
+  filter(crop_name %in% sometimes_erode ) %>%  
+  filter(crop_name != "Pyrethrum") %>%   #including pyrethrum does not allow us to do this regression
+  do(tidy(lm_robust(kg_perha_planted ~ erosion_c + landscape_no + round + season, clusters = cluster,
+             data = . )))
+
+```
+
+
+
+```{r}
+###Creating a custom theme
+
+theme_vsr <- function () { 
+    theme_classic(base_size=9, base_family="Avenir")+
+    theme(plot.title = element_text(face="bold"), legend.title = element_text(face="bold"))
+}
+
+```
+
+
+###Simple linear model coefficient plots
+(note we refer to simple linear model, when we really mean cluster linear model with only one explanatory variable)
+
+```{r}
+
+#Creating intercropping dataframe
+
+inter_coefs <- filter(inter_lm, term =="intercroppedTRUE")
+inter_coefs$term
+inter_coefs$term[which(inter_coefs$term=="intercroppedTRUE")] <- "" #this gets rid of x axis lable on plot
+inter_coefs$model <- inter_coefs$crop_name
+
+inter_coefs$crop_name <- ordered(inter_coefs$crop_name, levels = c("Soyabeans", "Sorghum", "Maize", "Irish Potatoes", "Cassava", "Beans", "Banana Beer"))
+
+str(inter_coefs$crop_name)
+
+```
+
+
+
+### Simple linear model: Organic fertilizer
+```{r}
+##Plotting organic fertilizer coefficients
+
+ogfert_coefs <- filter(ogfert_lm, term =="org_perha_planted")
+ogfert_coefs$term[which(ogfert_coefs$term=="org_perha_planted")] <- ""
+ogfert_coefs$model <- ogfert_coefs$crop_name
+
+lm_plot_org <- dwplot(ogfert_coefs, dodge_size =  .7)+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Organic Fertilizer")+
+xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#a6cd5b", "#eb8932", "#85bcc1", "#eb4024", "#e8af3c", "#55ad71", "#70519b", "#3f7a82", "#9c8dc3")) +
+  theme_vsr()
+
+lm_plot_org
+
+# ggsave("lm_plot_org.png", plot = lm_plot_org, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+### Simple linear model: Inorganic fertilizer
+```{r}
+
+##Plotting inorganic fertilizer coefficients
+
+inogfert_coefs <- filter(inogfert_lm, term =="inorg_perha_planted")
+inogfert_coefs$term[which(inogfert_coefs$term=="inorg_perha_planted")] <- "" 
+inogfert_coefs$model <- inogfert_coefs$crop_name
+
+lm_plot_inorg <- dwplot(inogfert_coefs, dodge_size =  .7)+
+ggtitle("Inorg Fert Coefficients:\nKGs Per HA Planted")+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Inorganic Fertilizer")+
+xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#eb8932", "#eb4024", "#e8af3c", "#a66f5b","#3f7a82", "#9c8dc3")) +
+  theme_vsr()
+
+lm_plot_inorg
+
+# ggsave("lm_plot_inorg.png", plot = lm_plot_inorg, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+### Simple linear model: Pesticides
+```{r}
+
+##Plotting Pesticide ccoefficients
+
+pest_coefs <- filter(pest_lm, term =="pest_perha_planted")
+pest_coefs$term[which(pest_coefs$term=="pest_perha_planted")] <- "" 
+pest_coefs$model <- pest_coefs$crop_name
+
+lm_plot_pest <- dwplot(pest_coefs, dodge_size =  .7)+
+ggtitle("Pesticide Coefficients:\nKGs Per HA Planted")+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Pesticides")+
+xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#eb8932", "#eb4024", "#e8af3c", "#a66f5b")) +
+  theme_vsr()
+
+lm_plot_pest
+
+# ggsave("lm_plot_pest.png", plot = lm_plot_pest, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+### Simple linear model: Intercropping
+```{r}
+##Plotting intercropping coefficients
+
+lm_plot_inter <- 
+dwplot(inter_coefs, dodge_size =  .7)+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Intercropping")+
+  xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#a6cd5b", "#eb8932", "#85bcc1", "#eb4024", "#e8af3c", "#55ad71", "#70519b")) +
+  theme_vsr()
+
+lm_plot_inter
+
+# ggsave("lm_plot_inter.png", plot = lm_plot_inter, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+### Simple linear model: Improved Seeds
+```{r}
+##Plotting improved seed coeffecients 
+
+seed_coefs <- 
+  filter(seed_lm, term =="purchased_seedTRUE")
+seed_coefs$term[which(seed_coefs$term=="purchased_seedTRUE")] <- "" 
+seed_coefs$model <- seed_coefs$crop_name
+
+lm_plot_seed <- dwplot(seed_coefs, dodge_size =  .7)+
+ggtitle("Improved Seed Coefficients:\nKGs Per HA Planted")+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Improved Seeds")+
+  xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#eb8932", "#85bcc1", "#eb4024", "#e8af3c", "#a66f5b", "#55ad71", "#70519b", "#3f7a82", "#9c8dc3")) +
+  theme_vsr()
+
+lm_plot_seed
+
+# ggsave("lm_plot_seed.png", plot = lm_plot_seed, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+### Simple linear model: Erosion Control
+```{r}
+##Plotting Erosion Control coefficients
+erode_coefs <- 
+  filter(erode_lm, term =="erosion_cTRUE")
+erode_coefs$term[which(erode_coefs$term=="erosion_cTRUE")] <- "" 
+erode_coefs$model <- erode_coefs$crop_name
+
+lm_plot_erosion <- dwplot(erode_coefs, dodge_size =  .7)+
+ggtitle("Erosion Control Coefficients:\nKGs Per HA Planted")+
+  geom_vline(xintercept = 0, linetype = 'dashed', colour = "darkgrey"  )+
+  ggtitle("95% Confidence Interval: Erosion Control")+
+xlab("Crop yield (kg/hectare)")+
+  scale_color_manual(name="Crop Type", values = c("#a6cd5b", "#eb8932", "#85bcc1", "#eb4024", "#e8af3c", "#a66f5b", "#55ad71", "#70519b", "#3f7a82", "#9c8dc3")) +
+  theme_vsr()
+
+lm_plot_erosion
+#  relabel_predictors(c("erosion_cTRUE"=" "))+
+#  theme(axis.ticks.y = element_blank())+
+
+# ggsave("lm_plot_erosion.png", plot = lm_plot_erosion, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 4, height = 3.3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+###Multiple regression coeficients
+```{r}
+#giving columns easier names 
+colnames(df)[colnames(df)=="ag4a_04"] <- "intercropped"
+colnames(df)[colnames(df)=="ag3a_14"] <- "erosion_c"
+colnames(df)[colnames(df)=="ag4a_19"] <- "purchased_seed"
+colnames(df)[colnames(df)=="hh_e65_1"] <- "hh_earnings"
+```
+
+
+
+```{r}
+
+##Creating data frame for crops with greatest sample size
+
+Beans <- filter(df, crop_name == "Beans" )
+
+Potatoes <- filter(df,  crop_name == "Irish Potatoes" )
+
+Maize <- filter(df, crop_name == "Maize" )
+
+Paddy <- filter(df,  crop_name == "Paddy" )
+
+Sorghum <- filter(df,  crop_name == "Sorghum" )
+
+Soyabeans <- filter(df, crop_name == "Soyabeans" )
+
+SP <- filter(df,  crop_name == "Sweet Potatoes" )
+
+Wheat <- filter(df, crop_name == "Wheat" )
+
+```
+
+
+
+```{r}
+##Creating data frame which only includes variables of interest for regression models for crops with greatest sample size
+
+Beans <- select(Beans, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted", "pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round", "cluster", "season")
+
+Potatoes <- select(Potatoes, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted", "pest_perha_planted","landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round","cluster", "season")
+
+Maize <- select(Maize, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted","pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round", "cluster","season")
+
+Paddy <- select(Paddy, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted","pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round","cluster", "season")
+
+Sorghum <- select(Sorghum, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted", "pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round", "cluster", "season")
+
+Soyabeans <- select(Soyabeans, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted","pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round", "cluster","season")
+
+SP <- select(SP, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted","pest_perha_planted", "landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round","cluster", "season")
+
+Wheat <- select(Wheat, "intercropped", "purchased_seed", "erosion_c", "inorg_perha_planted", "org_perha_planted", "pest_perha_planted","landscape_no", "hh_earnings", "kg_perha_planted", "value_perha_planted", "round","cluster", "season")
+
+```
+
+
+
+```{r}
+###Running clustered regression models (standard errors clustered on variable "cluster", which is a unique plot ID, for crops with the greatest sample size, controlling for landscape round and season), and including all practices in each model and then plotting results in coeffecient plots
+
+
+# df %>% 
+#   group_by(crop_name) %>% 
+#   tally()
+
+#MLM PLOT BEANS
+mod_boldc <-lm.cluster(kg_perha_planted ~  intercropped + erosion_c + purchased_seed +inorg_perha_planted + org_perha_planted + landscape_no, data = Beans, cluster = "cluster")
+
+mlm_plot_beans <- coefplot(mod_boldc$lm_res, title = '\n\nBeans (n=647) ', ylab="", xlab = "Crop yield (kg/hectare)", color = "#eb8932", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted", "pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer")) +
+  theme_vsr()
+
+mlm_plot_beans
+
+
+#MLM PLOT IRISH POTATOES
+mod_poldc <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted+ org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Potatoes, cluster = "cluster")
+
+mlm_plot_irish_potatoes <- coefplot(mod_poldc$lm_res, title = '\n\nIrish Potatoes (n=191)', ylab="", xlab = "Crop yield (kg/hectare)", color="#eb4024", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted","pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer", pest_perha_planted = "10s KGs of Pesticide"))+
+  theme_vsr()
+
+mlm_plot_irish_potatoes
+
+
+#MLM PLOT MAIZE
+mod_moldc <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted + org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Maize, cluster = "cluster")
+
+mlm_plot_maize <- 
+coefplot(mod_moldc$lm_res, predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted"), title = '\nMaize (n=348)', ylab="", xlab = "Crop yield (kg/hectare)", color = "#e8af3c",  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer"))+
+  theme_vsr()
+
+mlm_plot_maize
+
+
+#MLM PLOT PADDY
+mod_pyold <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted+ org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Paddy, cluster = "cluster")
+
+mlm_plot_paddy <- 
+coefplot(mod_pyold$lm_res, title = '\n\nPaddy (n= 35)', ylab="", xlab = "Crop yield (kg/hectare)", color="#a66f5b", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted","pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer", pest_perha_planted = "10s KGs of Pesticide"))+
+  theme_vsr()
+
+mlm_plot_paddy
+
+
+#MLM PLOT SORGHUM
+mod_sold <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted+ org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Sorghum, cluster = "cluster")
+
+mlm_plot_sorghum <- 
+coefplot(mod_sold$lm_res, title = '\n\nSorghum (n= 78)', ylab="", xlab = "Crop yield (kg/hectare)", color="#55ad71", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted","pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer", pest_perha_planted = "10s KGs of Pesticide"))+
+  theme_vsr()
+
+mlm_plot_sorghum
+
+
+#MLM PLOT SOYABEANS
+mod_soyold <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted+ org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Soyabeans, cluster = "cluster")
+
+mlm_plot_soyabeans <- 
+coefplot(mod_soyold$lm_res, title = '\n\nSoyabeans (n= 32)', ylab="", xlab = "Crop yield (kg/hectare)", color="#70519b", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted","pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer", pest_perha_planted = "10s KGs of Pesticide"))+
+  theme_vsr()
+
+mlm_plot_soyabeans
+
+
+#MLM PLOT SWEET POTATOES
+mod_spoldc <-lm.cluster(kg_perha_planted ~ intercropped +  erosion_c + purchased_seed + inorg_perha_planted + org_perha_planted  + landscape_no, data = SP, cluster = "cluster")
+
+mlm_plot_sweet_potatoes <- coefplot(mod_spoldc$lm_res, title = '\nSweet Potatoes (n= 87)', ylab="", xlab = "Crop yield (kg/hectare)", color = "#3f7a82", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer")) +
+  theme_vsr()
+
+mlm_plot_sweet_potatoes
+
+
+#MLM PLOT WHEAT
+mod_wold <-lm.cluster(kg_perha_planted ~ intercropped + purchased_seed + inorg_perha_planted+ org_perha_planted + pest_perha_planted +  landscape_no + round + season + erosion_c, data = Wheat, cluster = "cluster")
+mlm_plot_wheat <- 
+coefplot(mod_wold$lm_res, title = '\n\nWheat (n= 38)', ylab="", xlab = "Crop yield (kg/hectare)", color="#9c8dc3", predictors = c("intercropped", "erosion_c", "purchased_seed", "inorg_perha_planted", "org_perha_planted","pest_perha_planted"),  sort="alphabetical", newNames=c(erosion_cTRUE="Erosion Control", intercroppedTRUE = "Intercropped", purchased_seedTRUE = "Purchased Seed", inorg_perha_planted ="10s KGs of Inorganic Fertilizer", org_perha_planted = "100s KGs of Organic Fertilizer", pest_perha_planted = "10s KGs of Pesticide"))+
+  theme_vsr()
+
+mlm_plot_wheat
+
+```
+
+
+
+```{r}
+#stylizing plots
+
+
+mlm_first4 <- 
+ggdraw() +
+  draw_plot(mlm_plot_beans, x = 0, y = .5, width = .5, height = .5) +
+  draw_plot(mlm_plot_irish_potatoes, x = .5, y = .5, width = .5, height = .5) +
+  draw_plot(mlm_plot_maize, x = 0, y = 0, width = .5, height = 0.5) +
+  draw_plot(mlm_plot_paddy, x = .5, y = 0, width = .5, height = 0.5) 
+  draw_label("95% Confidence interval of Multiple Linear Regression Coefficients: Harvest Volume", x=.5, y=.97, fontfamily = "Avenir")
+
+mlm_first4
+
+
+mlm_last4 <- 
+ggdraw() +
+  draw_plot(mlm_plot_sorghum, x = 0, y = .5, width = .5, height = .5) +
+  draw_plot(mlm_plot_soyabeans, x = .5, y = .5, width = .5, height = .5) +
+  draw_plot(mlm_plot_sweet_potatoes, x = 0, y = 0, width = .5, height = 0.5) +
+  draw_plot(mlm_plot_wheat, x = .5, y = 0, width = .5, height = 0.5) +
+  draw_label("95% Confidence interval of Multiple Linear Regression Coefficients: Harvest Volume", x=.5, y=.97, fontfamily = "Avenir")
+
+mlm_last4
+
+#ALL MLM PLOTS
+mlm_ALL <- 
+ggdraw() +
+  draw_plot(mlm_plot_beans, x = 0, y = .75, width = .5, height = .25) +
+  draw_plot(mlm_plot_irish_potatoes, x = .5, y = .75, width = .5, height = .25) +
+  draw_plot(mlm_plot_maize, x = 0, y = .5, width = .5, height = 0.25) +
+  draw_plot(mlm_plot_paddy, x = .5, y = .5, width = .5, height = 0.25) +
+  draw_plot(mlm_plot_sorghum, x = 0, y = .25, width = .5, height = .25) +
+  draw_plot(mlm_plot_soyabeans, x = .5, y = .25, width = .5, height = .25) +
+  draw_plot(mlm_plot_sweet_potatoes, x = 0, y = 0, width = .5, height = 0.25) +
+  draw_plot(mlm_plot_wheat, x = .5, y = 0, width = .5, height = 0.25) +
+  draw_label("95% Confidence interval of Multiple Linear Regression Coefficients: Harvest Volume", x=.5, y=.99, fontfamily = "Avenir")
+
+mlm_ALL
+
+
+# ggsave("mlm_ALL.png", plot = mlm_ALL, device = "png", path = "~/Documents/Bren/GP/3Graphs/Poster/",
+#   width = 7.5, height = 8.5, units = c("in"),
+#   dpi = 700)
+
+```

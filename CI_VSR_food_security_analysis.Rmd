@@ -1,0 +1,491 @@
+---
+title: "Food Security"
+author: "Austin Richards"
+date: "1/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+##Data 
+
+###Load libraries & data
+```{r}
+
+#load libraries
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(ggthemes)
+library(broom)
+library(purrr)
+library(dotwhisker)
+library(estimatr)
+library(readr)
+library(multiwayvcov)
+library(mice)
+library(miceadds)
+library(RColorBrewer)
+library(coefplot)
+library(wesanderson)
+
+
+#load data
+fieldcrop <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_field_season_fieldcrop.csv"))
+hh_fieldcrop <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_fieldcrop.csv"))
+field_season <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_field_season.csv"))
+hh_indiv <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_individual.csv"))
+fs <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household.csv"))
+exchange_rates <- read_csv("exchange_rates.csv") #exchange rates file shared by CI
+
+```
+
+
+###Data wranling
+```{r}
+#Filter fieldcrop, treat factors as factors and numeric as numeric
+fieldcrop <- dplyr::filter(fieldcrop, country == 'RWA', ag4a_15 != "na")
+fieldcrop$ag4a_08 <- as.numeric(fieldcrop$ag4a_08)
+fieldcrop$ag4a_15 <- as.numeric(fieldcrop$ag4a_15)
+fieldcrop$ag4a_15_unit <- as.factor(fieldcrop$ag4a_15_unit)
+fieldcrop$crop_name <- as.factor(fieldcrop$crop_name)
+fieldcrop$ag4a_15_unit[which(fieldcrop$ag4a_15_unit=="Liter")] <- "Kg" #because this is a misentry
+fieldcrop <- filter(fieldcrop, ag4a_15_unit == "Kg")
+
+#fix crop name mismatches
+fieldcrop$crop_name[which(fieldcrop$crop_name=="Irish potatoes")] <- "Irish Potatoes"
+fieldcrop$crop_name[which(fieldcrop$crop_name=="Blood fruit")] <- "Blood Fruit"  
+
+#Filter field_season, treat factors as factors and numeric as numeric
+field_season <- filter(field_season, country == 'RWA',  ag3a_03 == 'Cultivated' )
+field_season$ag3a_39 <- as.factor(field_season$ag3a_39)
+field_season$ag3a_39a <- as.factor(field_season$ag3a_39a)
+field_season$ag3a_39a_other <- as.factor(field_season$ag3a_39a_other)
+field_season$ag3a_40 <- as.numeric(field_season$ag3a_40)
+field_season$ag3a_45 <- as.factor(field_season$ag3a_45)
+field_season$ag3a_47 <- as.factor(field_season$ag3a_47)
+
+#fix crop name mismatch
+field_season$ag3a_07_1[which(field_season$ag3a_07_1=="Irish potatoes")] <- "Irish Potatoes"
+field_season$ag3a_07_1[which(field_season$ag3a_07_1=="Blood fruit")] <- "Blood Fruit"
+
+#fset landscape # as factor in household survey data
+hh_fieldcrop$landscape_no <- as.factor(hh_fieldcrop$landscape_no)
+
+#Join fieldcrop and field_season dataframes
+joined_df <- inner_join(field_season, fieldcrop, by =c("id"= "parent_id", 'round', "landscape_no", "country", "field_no", "hh_refno", "season"))
+
+#Add columns for yield
+joined_df <- mutate(joined_df, kg_peracre = ag4a_15/ag4a_08)
+joined_df <- mutate(joined_df, kg_perha = kg_peracre*(1/.404686))
+
+#per acre planted 
+joined_df$ag4a_02[which(joined_df$ag4a_02=="1/4")] <- .25
+joined_df$ag4a_02[which(joined_df$ag4a_02=="1/2")] <- .5
+joined_df$ag4a_02[which(joined_df$ag4a_02=="3/4")] <- .75
+joined_df$ag4a_02[which(joined_df$ag4a_02=="Almost All")] <- 1
+joined_df$ag3a_40 <- as.numeric(joined_df$ag3a_40)
+joined_df$ag3a_47 <- as.numeric(joined_df$ag3a_47)
+joined_df$ag4a_02 <- as.numeric(joined_df$ag4a_02)
+
+joined_df <- mutate(joined_df, kg_peracre_planted = case_when(ag4a_01 == TRUE ~ kg_peracre, ag4a_01 == FALSE ~ ag4a_15/(ag4a_08*ag4a_02))) %>% 
+  mutate(kg_perha_planted = kg_peracre_planted *(1/.404686))
+
+#value per hectare planted 
+joined_df <- filter(joined_df, kg_perha_planted != Inf) %>% 
+  mutate(value_peracre = ag4a_16/ag4a_08) %>% 
+  mutate(value_perha = value_peracre*(1/.404686)) %>% 
+  mutate(value_peracre_planted = case_when(ag4a_01 == TRUE ~ value_peracre, ag4a_01 == FALSE ~ ag4a_16/ag4a_08*ag4a_02)) %>% 
+  mutate(value_perha_planted = value_peracre_planted *(1/.404686))
+
+#Add column for pesticide kg per hectare planted
+joined_df <-mutate(joined_df, pesticide_use_kg = ifelse(ag3a_60_2 == "Millilitre", ag3a_60_1*0.001, ag3a_60_1)) %>% 
+  mutate(pesticide_use_kg = case_when(ag3a_58 == TRUE ~ pesticide_use_kg, ag3a_58 == FALSE ~ 0)) %>% 
+  mutate(pest_peracre = pesticide_use_kg/ag4a_08) %>% 
+  mutate(pest_perha = pest_peracre*(1/.404686)) %>% 
+  mutate(pest_peracre_planted = case_when(ag4a_01 == TRUE ~ pest_peracre, ag4a_01 == FALSE ~ pest_peracre/ag4a_02)) %>% 
+  mutate(pest_perha_planted = pest_peracre_planted *(1/.404686))
+
+#Add column for inorg fert kg per hectare planted
+joined_df <- mutate(joined_df, inorg_peracre = ag3a_47/ag4a_08) %>% 
+  mutate(inorg_perha = inorg_peracre*(1/.404686)) %>%  
+  mutate(inorg_perha_planted = case_when(ag4a_01 == TRUE ~ inorg_perha, ag4a_01 == FALSE ~ inorg_perha/ag4a_02)) %>% 
+  mutate(inorg_perha_planted = case_when(ag3a_45 ==TRUE ~ inorg_perha_planted, ag3a_45 == FALSE ~ 0 ))
+
+#Add column for org fert kg per hectare planted
+joined_df <- mutate(joined_df, org_peracre = ag3a_40/ag4a_08) %>% 
+  mutate(org_perha = org_peracre*(1/.404686)) %>%
+  mutate(org_perha_planted = case_when(ag4a_01 == TRUE ~ org_peracre, ag4a_01 == FALSE ~ org_perha/ag4a_02)) %>% 
+  mutate(org_perha_planted = case_when(ag3a_39 ==TRUE ~ org_perha_planted, ag3a_39 == FALSE ~ 0 ))
+
+```
+
+#### General
+**ag4a_01** Was crop planted in entire area of FIELD?
+**ag4a_02** Approximately, how much of the FIELD was planted with the crop?
+**ag4a_08** What was the area harvested? (ACRES)
+**ag4a_16** What is the estimated value of the harvested crop in local currency?
+
+#### Agricultural Inputs
+**ag3a_39** Did you use any ORGANIC FERTILIZER on this FIELD?
+**ag3a_40** What was the quantity of organic fertilizer used? KGS
+
+**ag3a_45** Did you use any inorganic fertilizer on this FIELD?
+**ag3a_47** What quantity of [FERTILIZER] did you use? (KGs)
+
+**ag3a_58** Did you use any pesticide/ herbicide on this FIELD?
+**ag3a_60_1** What quantity of this pesticide/herbicide did you use?
+
+
+#### Agricultural Practices
+**ag3a_14** Was there any erosion control/water harvesting facility on this FIELD?
+**ag4a_04** Was cultivation intercropped?
+**ag4a_23** What type of seed did you purchase ?
+
+
+```{r}
+
+##Refrence index calculation below:
+
+# hh_i031
+# How many meals, including breakfast are taken per day in your household? (Adults: over 5 Years Old)
+
+# hh_e65_1
+# Net household income
+
+# hh_i08
+# In the last 12 months, have you been faced with a situation when you did not have enough food to feed the household?
+
+# In the past 7 days, how many days have you or someone in your household had to:
+# hh_i02_1  Rely on less preferred foods? 
+# hh_i02_2  Limit the variety of foods eaten? 
+# hh_i02_3  Limit portion size at meal-times? 
+# hh_i02_4  Reduce number of meals eaten in a day? 
+# hh_i02_5  Restrict consumption by adults for small children to eat? 
+# hh_i02_6  Borrow food, or rely on help from a friend or relative? 
+# hh_i02_7  Have no food of any kind in your house-hold? 
+# hh_i02_8  Go a whole day and night without eating anything?
+
+fs$months_insecurity <- rowSums(fs[ , c(paste0('hh_i09a_', seq(1,12)), paste0('hh_i09b_', seq(1,12)))], na.rm=T)
+
+
+fs$hfias <- rowSums(fs[ , c('hh_i02_1', 'hh_i02_2', 'hh_i02_3', 'hh_i02_4', 'hh_i02_5', 'hh_i02_6', 'hh_i02_7', 'hh_i02_8')], na.rm=T)
+
+
+f_groups <- c("hh_k2_8_a", "hh_k2_8_b", "hh_k2_8_c", "hh_k2_8_d", "hh_k2_8_e",
+              "hh_k2_8_f","hh_k2_8_g",  "hh_k2_8_h", "hh_k2_8_i", "hh_k2_8_j")
+
+fs$diversity <- rowSums(fs[f_groups] / 7, na.rm=T) / length(f_groups)
+
+fs <- fs %>% 
+  select(country, landscape_no, hh_refno, round, shortage_year=hh_i08, 
+         months_insecurity, number_meals=hh_i031, hfias, diversity,
+         hh_interview_date)
+
+##Nonfood spending
+
+nfs <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_expenditure.csv"))
+
+nfs$hh_paid[nfs$hh_period=='week'] <- nfs$hh_paid[nfs$hh_period=='week']*52.14
+nfs$hh_paid[nfs$hh_period=='year'] <- nfs$hh_paid[nfs$hh_period=='year']*12
+
+nfs <- nfs %>%
+  group_by(country, landscape_no, hh_refno, round) %>%
+  summarize(Nonfood.Spending = sum(hh_paid, na.rm=T))
+
+
+##Food Spending
+food <- read_csv(url("https://vitalsigns-website-downloads.s3.amazonaws.com/tables/household_food.csv"))
+
+food <- food %>% 
+  rowwise() %>%
+  mutate(FCV = sum(hh_k_04, hh_k_05a, na.rm=T)) %>%
+  group_by(country, landscape_no, hh_refno, round) %>%
+  summarise(Food.Consumption.Value = sum(FCV, na.rm = TRUE)*52.14, Food.Spending = sum(hh_k_04, na.rm=T)*52.14)
+
+#Combine and aggregate
+out <- Reduce(function(x, y){merge(x, y, all=T)}, list(fs, nfs, food))
+out$Food_As_Percent_Total_Spending <- (out$Food.Spending/(out$Food.Spending + out$Nonfood.Spending))*100
+ 
+
+colnames(exchange_rates)[colnames(exchange_rates)=="End Date"] <- "date"
+
+ymd(exchange_rates$date)
+
+#match rate to interview date and country
+out$date <- ymd(ceiling_date(out$hh_interview_date, "week"))  #find the next Sunday
+
+out<-merge(out, exchange_rates, all.x=T, all.y=F)
+
+rateadjust <- c('Nonfood.Spending', 'Food.Spending', 'Food.Consumption.Value')
+
+out[ , rateadjust] <- (out[ , rateadjust]/out$rate)*1.1
+
+out_ls <- out %>% group_by(country, landscape_no) %>%
+  summarize(avg_meals = mean(number_meals, na.rm=T),
+            Percent_Shortage_Past_Year = mean(shortage_year, na.rm=T)*100,
+            Mean_Months_Insecurity = mean(months_insecurity, na.rm=T),
+            Mean_Diet_Diversity = mean(diversity, na.rm=T),
+            Mean_Nonfood_Spending = mean(Nonfood.Spending, na.rm=T),
+            Mean_Food_Consumption_Value = mean(Food.Consumption.Value, na.rm=T),
+            Mean_Food_Spending = mean(Food.Spending, na.rm=T),
+            Food_As_Percent_Total_Spending = mean(Food_As_Percent_Total_Spending, na.rm=T))
+
+#create data frame filtered to only retain households from Rwanda
+out_rwanda <- filter (out, country == "RWA")
+out_ls_rwanda <- filter(out_ls, country == "RWA")
+
+```
+
+
+Agricultural practice indicators for reference:
+
+#### General
+**ag4a_01** Was crop planted in entire area of FIELD?
+**ag4a_02** Approximately, how much of the FIELD was planted with the crop?
+**ag4a_08** What was the area harvested? (ACRES)
+**ag4a_16** What is the estimated value of the harvested crop in local currency?
+
+#### Agricultural Inputs
+**ag3a_39** Did you use any ORGANIC FERTILIZER on this FIELD?
+**ag3a_40** What was the quantity of organic fertilizer used? KGS
+
+**ag3a_45** Did you use any inorganic fertilizer on this FIELD?
+**ag3a_47** What quantity of [FERTILIZER] did you use? (KGs)
+
+**ag3a_58** Did you use any pesticide/ herbicide on this FIELD?
+**ag3a_60_1** What quantity of this pesticide/herbicide did you use?
+
+
+#### Agricultural Practices
+**ag3a_14** Was there any erosion control/water harvesting facility on this FIELD?
+**ag4a_04** Was cultivation intercropped?
+**ag4a_23** What type of seed did you purchase ?
+
+
+### Household food security data wrangling
+```{r}
+##Creating dataframes for variables of interest, and then for each practice, giving a binary assingment for whether households ever used each practice
+
+
+hh_joined_df <-merge(joined_df, out_rwanda, all.x=T, all.y=F) %>% 
+  select(hfias, hh_refno, ag3a_39, ag3a_45, ag3a_58, ag4a_04, ag3a_14, field_no, landscape_no, crop_name)
+
+# organic fertilizer
+hh_joined_org <- select(hh_joined_df, hfias, hh_refno, ag3a_39, field_no, landscape_no, crop_name) %>% 
+  mutate(org = case_when(ag3a_39 == TRUE ~ 1, FALSE ~ 0))
+hh_joined_org$org[is.na(hh_joined_org$org)] <- 0
+hh_joined_org$org <- as.numeric(hh_joined_org$org)
+hh_joined_org_ag  <- aggregate(org ~ hh_refno + hfias + landscape_no, FUN =  sum, data = hh_joined_org)
+hh_joined_org_ag <- aggregate(hfias ~ hh_refno + org +landscape_no, FUN = mean, data= hh_joined_org_ag) %>% 
+  mutate(sometimes_org = case_when(org > 0 ~ TRUE, org == 0 ~ FALSE))
+
+# inorganic fertilizer
+hh_joined_inorg <- select(hh_joined_df, hfias, hh_refno, ag3a_45, field_no, landscape_no, crop_name) %>% 
+  mutate(inorg = case_when(ag3a_45 == TRUE ~ 1, FALSE ~ 0))
+hh_joined_inorg$inorg[is.na(hh_joined_inorg$inorg)] <- 0
+hh_joined_inorg$inorg <- as.numeric(hh_joined_inorg$inorg)
+hh_joined_inorg_ag  <- aggregate(inorg ~ hh_refno + hfias + landscape_no, FUN =  sum, data = hh_joined_inorg)
+hh_joined_inorg_ag <- aggregate(hfias ~ hh_refno + inorg +landscape_no, FUN = mean, data= hh_joined_inorg_ag) %>% 
+  mutate(sometimes_inorg = case_when(inorg > 0 ~ TRUE, inorg == 0 ~ FALSE))
+
+# pesticides fertilizer
+hh_joined_pest <- select(hh_joined_df, hfias, hh_refno, ag3a_58, field_no, landscape_no, crop_name) %>% 
+  mutate(pest = case_when(ag3a_58 == TRUE ~ 1, FALSE ~ 0))
+hh_joined_pest$pest[is.na(hh_joined_pest$pest)] <- 0
+hh_joined_pest$pest <- as.numeric(hh_joined_pest$pest)
+hh_joined_pest_ag  <- aggregate(pest ~ hh_refno + hfias + landscape_no, FUN =  sum, data = hh_joined_pest)
+hh_joined_pest_ag <- aggregate(hfias ~ hh_refno + pest +landscape_no, FUN = mean, data= hh_joined_pest_ag) %>% 
+  mutate(sometimes_pest = case_when(pest > 0 ~ TRUE, pest == 0 ~ FALSE))
+
+# intercrop
+hh_joined_ic <-select(hh_joined_df, hfias, hh_refno, ag4a_04, field_no, landscape_no, crop_name) %>% 
+  mutate(ic = case_when(ag4a_04 == TRUE ~ 1, FALSE ~ 0))
+hh_joined_ic$ic[is.na(hh_joined_ic$ic)] <- 0
+hh_joined_ic$ic <- as.numeric(hh_joined_ic$ic)
+hh_joined_ic_ag  <- aggregate(ic ~ hh_refno + hfias + landscape_no, FUN =  sum, data = hh_joined_ic)
+hh_joined_ic_ag <- aggregate(hfias ~ hh_refno + ic +landscape_no, FUN = mean, data= hh_joined_ic_ag) %>% 
+  mutate(sometimes_ic = case_when(ic > 0 ~ TRUE, ic == 0 ~ FALSE))
+
+# erosion control
+hh_joined_ec <-select(hh_joined_df, hfias, hh_refno, ag3a_14, field_no, landscape_no, crop_name) %>% 
+  mutate(ec = case_when(ag3a_14 == TRUE ~ 1, FALSE ~ 0))
+hh_joined_ec$ec[is.na(hh_joined_ec$ec)] <- 0
+hh_joined_ec$ec <- as.numeric(hh_joined_ec$ec)
+hh_joined_ec_ag  <- aggregate(ec ~ hh_refno + hfias + landscape_no, FUN =  sum, data = hh_joined_ec)
+hh_joined_ec_ag <- aggregate(hfias ~ hh_refno + ec +landscape_no, FUN = mean, data= hh_joined_ec_ag) %>% 
+  mutate(sometimes_ec = case_when(ec > 0 ~ TRUE, ec == 0 ~ FALSE))
+
+```
+
+
+###Linear regression models
+```{r}
+
+#linear regression models, foods security access score by wheter or not a practice was ever employed by a given household in anyround, controlling for VS landscape
+
+hfias_org_lm <- lm(hh_joined_org_ag$hfias ~ hh_joined_org_ag$sometimes_org + hh_joined_org_ag$landscape_no)
+summary(hfias_org_lm)
+# hfias 2.5 points lower, p = .092
+
+hfias_inorg_lm <- lm(hh_joined_inorg_ag$hfias ~ hh_joined_inorg_ag$sometimes_inorg + hh_joined_inorg_ag$landscape_no)
+summary(hfias_inorg_lm)
+# hfias 4.3 points lower, p <.001*
+
+hfias_pest_lm <- lm(hh_joined_pest_ag$hfias ~ hh_joined_pest_ag$sometimes_pest + hh_joined_pest_ag$landscape_no)
+summary(hfias_pest_lm)
+# hfias 3.1 points lower, p = .023*
+
+hfias_inter_lm <- lm(hh_joined_ic_ag$hfias ~ hh_joined_ic_ag$sometimes_ic + hh_joined_ic_ag$landscape_no)
+summary(hfias_inter_lm)
+# hfias 2.5 points lower, p = .036*
+
+hfias_ec_lm <- lm(hh_joined_ec_ag$hfias ~ hh_joined_ec_ag$sometimes_ec + hh_joined_ec_ag$landscape_no)
+summary(hfias_ec_lm)
+# hfias 2.4 points lower, p = .122
+
+```
+
+
+###Delineate food security levels
+```{r}
+
+#overlapping density plot
+ggplot(hh_joined_ic_ag)+
+  geom_density(aes(x=hfias, fill =sometimes_ic, alpha = .4))
+
+#Create food security levels for dfs with and without other variables
+fs_df <- mutate(hh_joined_df, Level = ifelse(hh_joined_df$hfias == 0 | hh_joined_df$hfias == 1, 4, ifelse(hh_joined_df$hfias > 1 & hh_joined_df$hfias <= 18, 3, ifelse(hh_joined_df$hfias > 18 & hh_joined_df$hfias <= 36, 2, 1)))) %>% 
+  na.omit(fs_df)
+
+fs_ic_ag <- mutate(hh_joined_ic_ag, Level = ifelse(hh_joined_ic_ag$hfias == 0 | hh_joined_ic_ag$hfias == 1, 4, ifelse(hh_joined_ic_ag$hfias > 1 & hh_joined_ic_ag$hfias <= 18, 3, ifelse(hh_joined_ic_ag$hfias > 18 & hh_joined_ic_ag$hfias <= 36, 2, 1)))) 
+
+fs_inorg_ag <- mutate(hh_joined_inorg_ag, Level = ifelse(hh_joined_inorg_ag$hfias == 0 | hh_joined_inorg_ag$hfias == 1, 4, ifelse(hh_joined_inorg_ag$hfias > 1 & hh_joined_inorg_ag$hfias <= 18, 3, ifelse(hh_joined_inorg_ag$hfias > 18 & hh_joined_inorg_ag$hfias <= 36, 2, 1)))) 
+
+fs_pest_ag <- mutate(hh_joined_pest_ag, Level = ifelse(hh_joined_pest_ag$hfias == 0 | hh_joined_pest_ag$hfias == 1, 4, ifelse(hh_joined_pest_ag$hfias > 1 & hh_joined_pest_ag$hfias <= 18, 3, ifelse(hh_joined_pest_ag$hfias > 18 & hh_joined_pest_ag$hfias <= 36, 2, 1)))) 
+
+
+```
+
+
+
+```{r}
+#Set theme
+theme_vsr <- function () { 
+    theme_classic(base_size=9, base_family="Avenir")+
+    theme(plot.title = element_text(face="bold"), legend.title = element_text(face="bold"))
+}
+```
+
+###Final graphs
+```{r}
+#Food security by landscape
+FS_landscape <- ggplot(fs_df, aes(x=landscape_no, fill=rev(ordered(Level))))+
+  geom_bar(stat="count", position = "fill")+
+  scale_fill_manual(values = c("#eb4024", "#eb8932", "#e8af3c", "#85bcc1"), name = "Food Security", labels = c("Severely food insecure", "Moderately food insecure", "Mildy food insecure", "Food secure"))+
+  scale_x_discrete(expand = c(0.08,0))+ 
+  scale_y_continuous(labels=scales::percent, expand = c(0,0))+
+  ggtitle("Food Security and Landscape")+
+  ylab("Percent")+
+  xlab("Landscape")+
+  theme_vsr()
+
+FS_landscape
+
+# ggsave("FS_landscape.png", plot = FS_landscape, device = "png", path = "~/Documents/Bren/GP/3Graphs/Results/",
+#   width = 5, height = 3, units = c("in"),
+#   dpi = 300)
+
+
+col_vector=c("#a6cd5b", "#d4cae1", "#eb8932", "#df417e", "#f4c28f", "#436caa", "#fffca5", "#72bad3", "#b3602a", "#666666", "#539d3e", "#b9d7e4",    "#efa09c", "#9f7731", "#9ce5d5", "#eb4024", "#e8af3c", "#999999", "#a66f5b", "#644195", "#f56e18", "#85bcc1", "#752559", "#e7fbc9", "#693f26", "#2c6b96", "#ff8f7b", "#a68422", "#9c8dc3", "#85c9c8")
+
+FS_level_crops <- ggplot(fs_df, aes(x=Level, fill=ordered(crop_name)))+
+  geom_bar(stat="count", position = "fill")+
+  scale_fill_manual("Crop Type", values=col_vector)+
+  scale_y_continuous(labels=scales::percent, expand = c(0,0))+
+  scale_x_discrete(expand=c(0.015,0), labels=c("Severely food insecure", "Moderately food insecure", "Mildly food insecure", "Food secure"))+
+  theme_vsr()
+
+FS_level_crops
+
+# ggsave("FS_level_crops.png", plot = FS_level_crops, device = "png", path = "~/Documents/Bren/GP/3Graphs/Results/", width = 6, height = 4.3,
+#   dpi = 300)
+
+
+```
+
+###Food security ~ Intercropping
+```{r}
+
+fs_inter_bar <- ggplot(fs_ic_ag, aes(sometimes_ic, fill=ordered(Level)))+
+  geom_bar(stat="count", position = "fill")+
+  xlab("")+ylab("Proportion of sample")+
+  ggtitle("Food Security & Intercropping")+
+  scale_fill_manual(values = c("#eb4024", "#eb8932", "#e8af3c", "#85bcc1"), name = "Food Security", labels = c("Severely food insecure", "Moderately food insecure", "Mildy food insecure", "Food secure"))+
+  scale_x_discrete(expand = c(0.5, 0), labels = c("Monocropped","Intercropped")) +
+  scale_y_continuous(expand = c(0, 0))+
+  theme_vsr()
+
+fs_inter_bar
+
+
+#Specify Save Path Here
+#ggsave("fs_inter_bar.png", plot = fs_inter_bar, device = "png", path = "~/Documents/Bren/GP/3Graphs/Results/",
+ # width = 4, height = 3, units = c("in"),
+  #dpi = 300)
+
+```
+
+
+####Food security ~ Inorganic fertilizer
+```{r}
+#creating figures
+
+fs_inorg_bar <- ggplot(fs_inorg_ag, aes(sometimes_inorg, fill=ordered(Level)))+
+  geom_bar(stat="count", position = "fill")+
+  xlab("")+ylab("Proportion of sample")+
+  ggtitle("Food Security & Inorganic Fertilizer")+
+  scale_fill_manual(values = c("#eb4024", "#eb8932", "#e8af3c", "#85bcc1"), name = "Food Security", labels = c("Severely food insecure", "Moderately food insecure", "Mildy food insecure", "Food secure"))+
+  scale_x_discrete(expand = c(0.5, 0), labels = c("No inorganic \nfertilizer used","Inorganic fertilizer \nsometimes used")) +
+  scale_y_continuous(expand = c(0, 0))+
+  theme_vsr()
+
+fs_inorg_bar
+
+# ggsave("fs_inorg_bar.png", plot = fs_inorg_bar, device = "png", path = "~/Documents/Bren/GP/3Graphs/Results/",
+#   width = 4, height = 3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+###Food security ~ Pesticides
+```{r}
+#creating figures
+
+fs_pest_bar <- ggplot(fs_pest_ag, aes(sometimes_pest, fill=ordered(Level)))+
+  geom_bar(stat="count", position = "fill")+
+  xlab("")+ylab("Proportion of sample")+
+  ggtitle("Food Security & Pesticides")+
+  scale_fill_manual(values = c("#eb4024", "#eb8932", "#e8af3c", "#85bcc1"), name = "Food Security", labels = c("Severely food insecure", "Moderately food insecure", "Mildy food insecure", "Food secure"))+
+  scale_x_discrete(expand = c(0.5, 0), labels = c("No pesticides used","Pesticides \nsometimes used")) +
+  scale_y_continuous(expand = c(0, 0))+
+  theme_vsr()
+
+fs_pest_bar
+
+# ggsave("fs_pest_bar.png", plot = fs_pest_bar, device = "png", path = "~/Documents/Bren/GP/3Graphs/Results/",
+#   width = 4, height = 3, units = c("in"),
+#   dpi = 300)
+
+```
+
+
+
+
