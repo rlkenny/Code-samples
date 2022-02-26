@@ -1,6 +1,6 @@
 ---
-title: "Food Security"
-author: "Austin Richards"
+title: "Conservation International: Vital Signs Rwanda Food Security Analysis"
+author: "Rachel Kenny and Austin Richards"
 date: "1/25/2019"
 output: html_document
 ---
