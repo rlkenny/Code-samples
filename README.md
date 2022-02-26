@@ -3,7 +3,7 @@ Samples of R code I have written or collaborated on
 
 The following are code samples from a variety of projects over the last five years:
 
-1.Conservation International 
+1. Conservation International 
 
 File names: 
 CI_VSR_food_security_analysis.Rmd
